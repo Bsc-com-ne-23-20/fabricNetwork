@@ -1,76 +1,99 @@
-# Running the Primary Network
+# Prerequisites
+Ensure you have the following installed:
+- `git`
+- `curl`
+- `docker`
+- `jq`
 
-## Prerequisites
-
-Before running the primary network, ensure you have installed the following prerequisites:
-
-- docker and docker-compose
-- git
-- cURL
-- Node.js and npm
-
-## Network Commands
-
-The primary network script (`primary-network.sh`) provides various commands to manage the network.
-
-### 1. Bringing down the network
-
-Standard practice to do this before running the network
-To shut down the network and remove all containers, volumes, and artifacts:
+Installing prerequisites
+```bash
+# Installing git, curl and jq
+sudo apt install git curl jq
+```
 
 ```bash
+# Installing Docker
+# Add Docker's official GPG key:
+sudo apt-get update
+sudo apt-get install ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+# Add the repository to Apt sources:
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Installing go (v1.22.1)
+```bash
+cd ~
+mkdir downloads
+wget https://go.dev/dl/go1.22.1.linux-amd64.tar.gz
+sudo tar -xvf go1.22.1.linux-amd64.tar.gz
+sudo mv go /usr/local
+export GOROOT=/usr/local/go
+export GOPATH=$HOME/go
+export PATH=$GOPATH/bin:$GOROOT/bin:$PATH
+source ~/.profile
+```
+
+Navigate to the `fabricNetwork` directory:
+
+```bash
+cd fabricNetwork
+```
+
+# Bootstrap the network
+
+### Make all scripts executable (in current and subdirectories)
+
+```bash
+find . -type f -name "*.sh" -exec chmod +x {} \;
+```
+
+### Make binary files executable and add them to path
+```
+cd ./bin
+find . * -exec chmod +x {} \;
+echo -e "\n### UmodziRx bin files\nexport PATH=\$PATH:$(pwd)" >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Run the network
+First, bring down the network, get rid of any files from a previous run.
+```bash
+cd ../primary-network
 ./primary-network.sh down
 ```
 
-This command:
-- Stops all running containers (peers, orderers, CAs)
-- Removes Docker volumes containing ledger data
-- Cleans up chaincode containers and images
-- Removes crypto material and artifacts
-
-Use this command when you need to start fresh or switch between different network configurations.
-
-### Starting the network with a channel
-
-To bring up the network with Certificate Authorities (CAs) and CouchDB as the state database, and create a channel:
+You must be in the `primary-network/` directory to run the network:
 
 ```bash
 ./primary-network.sh up createChannel -ca -s couchdb
 ```
 
-This command:
-- Starts the network with two organizations (Org1 and Org2), each with one peer
-- Creates a single orderer node
-- Uses Fabric CAs to generate crypto material for all components
-- Uses CouchDB as the state database (supports rich queries)
-- Creates a channel named "mychannel" by default
-- Joins all peers to the created channel
-- Sets anchor peers for proper service discovery
+This will launch the following Docker containers for the network, one for each organization:
+- Peer nodes
+- Orderer nodes
+- Certificate Authorities
+- CouchDB databases
 
-The `-ca` flag specifies the use of Certificate Authorities for generating identities.
-The `-s couchdb` flag enables the CouchDB state database.
+# Deploy Chaincode
 
-### Deploying chaincode
-
-To deploy the basic asset transfer chaincode written in Go:
+To deploy the chaincode, use the following command:
 
 ```bash
 ./primary-network.sh deployCC -ccn basic -ccp ../asset-transfer-basic/chaincode-go -ccl go
 ```
 
-This command:
-- Packages the chaincode from the specified path
-- Installs the chaincode on all peers in the network
-- Approves the chaincode definition for both organizations
-- Commits the chaincode definition to the channel
-- Initializes the chaincode (if an init function is required)
-
-Parameters explained:
-- `-ccn basic`: Sets the chaincode name to "basic"
-- `-ccp ../asset-transfer-basic/chaincode-go`: Specifies the path to the chaincode
-- `-ccl go`: Indicates the chaincode is written in Go language
-
-After running this command, the chaincode is ready to be invoked from client applications or using the CLI.
+- Chaincode may be re-deployed without bringing down the network.
+- Several chaincodes may be deployed on a single channel, but each chaincode must be unique to each channel.
 
 ## Setup paths and env variables
 
@@ -84,10 +107,6 @@ export CORE_PEER_MSPCONFIGPATH=${PWD}/organizations/peerOrganizations/org1.examp
 export CORE_PEER_ADDRESS=localhost:7051
 ```
 
-## Interacting with the Network
-
-Once the network is up and the chaincode is deployed, you can interact with it using the Fabric SDK or through the CLI for testing purposes.
-
 ### Example: Querying the chaincode name
 
 ```bash
@@ -100,13 +119,13 @@ peer lifecycle chaincode queryinstalled
 peer chaincode invoke -o localhost:7050 \
 --ordererTLSHostnameOverride orderer.example.com \
 --tls \
---cafile /home/{path/to/primary-network}/organizations/ordererOrganizations/example.com/tlsca/tlsca.example.com-cert.pem \
+--cafile ${PWD}/organizations/ordererOrganizations/example.com/tlsca/tlsca.example.com-cert.pem \
 --channelID mychannel \
 --name basic \
 --peerAddresses localhost:7051 \
---tlsRootCertFiles /home/{path/to/primary-network}/organizations/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem \
+--tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem \
 --peerAddresses localhost:9051 \
---tlsRootCertFiles /home/{path/to/primary-network}/organizations/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem \
+--tlsRootCertFiles ${PWD}/organizations/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem \
 --ctor '{"Function":"CreateAsset","Args":["{\"PatientId\":\"001\",\"DoctorId\":\"doctor456\",\"PatientName\":\"John Doe\",\"DateOfBirth\":\"1990-01-01\",\"Prescriptions\":[{\"PrescriptionId\":\"rx789\",\"MedicationName\":\"Aspirin\",\"Dosage\":\"100mg\",\"Instructions\":\"Take once daily\"}]}"]}'
 ```
 
@@ -115,4 +134,5 @@ Navigate to `rest-api-go/` to run the rest api server
 
 ```bash
 cd ../asset-transfer-basic/rest-api-go/
+go run main.go
 ```
