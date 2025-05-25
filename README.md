@@ -42,6 +42,11 @@ echo -e "export PATH=$GOPATH/bin:$GOROOT/bin:$PATH" >> ~/.bashrc
 source ~/.bashrc
 ```
 
+# Clone the repository
+```bash
+git clone https://github.com/Bsc-com-ne-23-20/fabricNetwork.git
+```
+
 Navigate to the `fabricNetwork` directory:
 
 ```bash
