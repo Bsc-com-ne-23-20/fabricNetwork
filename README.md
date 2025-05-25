@@ -46,7 +46,7 @@ source ~/.bashrc
 ```bash
 git clone https://github.com/Bsc-com-ne-23-20/fabricNetwork.git
 ```
-#make sure you have docker desktop installed and running in your windows if not make sure this is so before proceeding further!
+# make sure you have docker desktop installed and running in your windows if not make sure this is so before proceeding further!
 Navigate to the `fabricNetwork` directory:
 
 ```bash
