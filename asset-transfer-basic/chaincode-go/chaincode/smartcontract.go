@@ -5,6 +5,7 @@ import (
     "fmt"
     "time"
     "github.com/hyperledger/fabric-contract-api-go/v2/contractapi"
+    "math/rand"
 )
 
 type SmartContract struct {
@@ -13,12 +14,12 @@ type SmartContract struct {
 
 // An asset is a patient's medical prescription record, with the following attributes:
 type Asset struct {
-    DoctorId      string         `json:"DoctorId"`      // ID of prescribing doctor
-    PatientName   string         `json:"PatientName"`   // Name of the patient
-    PatientId     string         `json:"PatientId"`     // Unique identifier for the patient
-    DateOfBirth   string         `json:"DateOfBirth,omitempty"` // Patient's DOB (optional)
-    Prescriptions []Prescription `json:"Prescriptions"` // Array of prescriptions
-    LastUpdated   string         `json:"LastUpdated"`   // Timestamp of last modification
+    DoctorId      string         `json:"DoctorId"`      
+    PatientName   string         `json:"PatientName"`  
+    PatientId     string         `json:"PatientId"`     
+    DateOfBirth   string         `json:"DateOfBirth,omitempty"` 
+    Prescriptions []Prescription `json:"Prescriptions"` 
+    LastUpdated   string         `json:"LastUpdated"`   
 }
 
 // Prescription structure
@@ -27,49 +28,90 @@ type Prescription struct {
     MedicationName      string `json:"MedicationName"`
     Dosage              string `json:"Dosage"`
     Instructions        string `json:"Instructions"`
-    Status              string `json:"Status"`    // Active, Filled, Revoked, Expired
-    CreatedBy           string `json:"CreatedBy"` // DoctorId who created it
+    Diagnosis           string `json:"Diagnosis"`       
+    Status              string `json:"Status"`    
+    CreatedBy           string `json:"CreatedBy"` 
     TxID                string `json:"TxID"`
     Timestamp           string `json:"Timestamp"`
     ExpiryDate          string `json:"ExpiryDate,omitempty"`
-    DispensingPharmacist string `json:"dispensingPharmacist,omitempty"` // ID of pharmacist who dispensed
-    DispensingTimestamp  string `json:"dispensingTimestamp,omitempty"`  // When it was dispensed
+    DispensingPharmacist string `json:"dispensingPharmacist,omitempty"`
+    DispensingTimestamp  string `json:"dispensingTimestamp,omitempty"`  
 }
 
 // IssuePrescription - this function allows a doctor to issue a new prescription for a patient
 // It requires the doctor to be authenticated and authorized to perform this action.
 func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface, assetJSON string) error {
-    // Parse the entire asset JSON
-    var asset Asset
-    err := json.Unmarshal([]byte(assetJSON), &asset)
+    // Parse the new asset data
+    var newAsset Asset
+    err := json.Unmarshal([]byte(assetJSON), &newAsset)
     if err != nil {
         return fmt.Errorf("failed to parse asset JSON: %v", err)
     }
 
     // Validate required fields
-    if asset.PatientId == "" || asset.DoctorId == "" {
+    if newAsset.PatientId == "" || newAsset.DoctorId == "" {
         return fmt.Errorf("patientId and doctorId are required")
     }
 
-    // Add metadata
-    asset.LastUpdated = time.Now().Format(time.RFC3339)
-    for i := range asset.Prescriptions {
-        asset.Prescriptions[i].TxID = ctx.GetStub().GetTxID()
-        asset.Prescriptions[i].Timestamp = asset.LastUpdated
-        asset.Prescriptions[i].Status = "Active"
-        asset.Prescriptions[i].CreatedBy = asset.DoctorId
-
-        if asset.Prescriptions[i].ExpiryDate == "" {
-            asset.Prescriptions[i].ExpiryDate = time.Now().AddDate(0, 1, 0).Format("2006-01-02") // 1 month from now
+    // Check if asset already exists
+    existingAsset, err := s.ReadAsset(ctx, newAsset.PatientId)
+    if err == nil {
+        // Asset exists - merge prescriptions
+        for _, prescription := range newAsset.Prescriptions {
+            // Validate required prescription fields
+            if prescription.Diagnosis == "" {
+                return fmt.Errorf("diagnosis is required for all prescriptions")
+            }
+            
+            // Add metadata to new prescription
+            prescription.TxID = ctx.GetStub().GetTxID()
+            prescription.Timestamp = time.Now().Format(time.RFC3339)
+            prescription.Status = "Active"
+            prescription.CreatedBy = newAsset.DoctorId
+            
+            if prescription.ExpiryDate == "" {
+                prescription.ExpiryDate = time.Now().AddDate(0, 1, 0).Format("2006-01-02")
+            }
+            
+            // Add to existing prescriptions
+            existingAsset.Prescriptions = append(existingAsset.Prescriptions, prescription)
         }
+        
+        // Update last updated time
+        existingAsset.LastUpdated = time.Now().Format(time.RFC3339)
+        
+        // Save merged asset
+        assetJSONBytes, err := json.Marshal(existingAsset)
+        if err != nil {
+            return err
+        }
+        return ctx.GetStub().PutState(newAsset.PatientId, assetJSONBytes)
+    } else {
+        // Asset doesn't exist - create new
+        
+        // Add metadata to new prescriptions
+        for i := range newAsset.Prescriptions {
+            if newAsset.Prescriptions[i].Diagnosis == "" {
+                return fmt.Errorf("diagnosis is required for all prescriptions")
+            }
+            newAsset.Prescriptions[i].TxID = ctx.GetStub().GetTxID()
+            newAsset.Prescriptions[i].Timestamp = time.Now().Format(time.RFC3339)
+            newAsset.Prescriptions[i].Status = "Active"
+            newAsset.Prescriptions[i].CreatedBy = newAsset.DoctorId
+            
+            if newAsset.Prescriptions[i].ExpiryDate == "" {
+                newAsset.Prescriptions[i].ExpiryDate = time.Now().AddDate(0, 1, 0).Format("2006-01-02")
+            }
+        }
+        
+        newAsset.LastUpdated = time.Now().Format(time.RFC3339)
+        
+        assetJSONBytes, err := json.Marshal(newAsset)
+        if err != nil {
+            return err
+        }
+        return ctx.GetStub().PutState(newAsset.PatientId, assetJSONBytes)
     }
-
-    assetJSONBytes, err := json.Marshal(asset)
-    if err != nil {
-        return err
-    }
-
-    return ctx.GetStub().PutState(asset.PatientId, assetJSONBytes)
 }
 
 // ReadAsset - returns world state information for an asset, patientId as key
@@ -238,6 +280,7 @@ func (s *SmartContract) GetAssetHistory(ctx contractapi.TransactionContextInterf
                 "medicationName": prescription.MedicationName,
                 "dosage":        prescription.Dosage,
                 "instructions":  prescription.Instructions,
+                "diagnosis":     prescription.Diagnosis,
                 "status":       prescription.Status,
                 "createdBy":    prescription.CreatedBy,
                 "timestamp":    prescription.Timestamp,
@@ -446,6 +489,7 @@ func (s *SmartContract) GetPrescriptionAnalytics(ctx contractapi.TransactionCont
         "dispensedCount": 0,
         "expiryCount": 0,
         "medicationFrequency": make(map[string]int),
+        "diagnosisFrequency": make(map[string]int),
         "averageDispenseTime": 0.0,
     }
 
@@ -468,6 +512,13 @@ func (s *SmartContract) GetPrescriptionAnalytics(ctx contractapi.TransactionCont
                 analytics["medicationFrequency"].(map[string]int)[prescription.MedicationName] = count + 1
             } else {
                 analytics["medicationFrequency"].(map[string]int)[prescription.MedicationName] = 1
+            }
+
+            // Track diagnosis frequency
+            if count, exists := analytics["diagnosisFrequency"].(map[string]int)[prescription.Diagnosis]; exists {
+                analytics["diagnosisFrequency"].(map[string]int)[prescription.Diagnosis] = count + 1
+            } else {
+                analytics["diagnosisFrequency"].(map[string]int)[prescription.Diagnosis] = 1
             }
 
             // Track status counts
@@ -505,7 +556,7 @@ func (s *SmartContract) CheckMedicationInteractions(ctx contractapi.TransactionC
             if prescription.Status == "Active" {
                 for _, interactor := range interactsWith {
                     if prescription.MedicationName == interactor {
-                        interactions = append(interactions, fmt.Sprintf("Warning: %s interacts with active medication %s", newMedication, interactor))
+                        interactions = append(interactions, fmt.Sprintf("Warning: %s interacts with active medication %s (prescribed for %s)", newMedication, interactor, prescription.Diagnosis))
                     }
                 }
             }
@@ -536,48 +587,72 @@ func (s *SmartContract) BatchCreatePrescriptions(ctx contractapi.TransactionCont
     return nil
 }
 
-// GetPrescriptionsByDoctor - get all prescriptions created by a specific doctor
+// GetPrescriptionsByDoctor - returns all prescriptions created by the specified doctor
 func (s *SmartContract) GetPrescriptionsByDoctor(ctx contractapi.TransactionContextInterface, doctorId string) ([]map[string]interface{}, error) {
     iterator, err := ctx.GetStub().GetStateByRange("", "")
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to get state by range: %v", err)
     }
     defer iterator.Close()
 
-    var doctorPrescriptions []map[string]interface{}
+    var results []map[string]interface{}
 
     for iterator.HasNext() {
         queryResponse, err := iterator.Next()
         if err != nil {
-            continue
+            return nil, fmt.Errorf("failed to get next result: %v", err)
         }
 
         var asset Asset
         if err := json.Unmarshal(queryResponse.Value, &asset); err != nil {
-            continue
+            continue // Skip malformed records but continue processing others
         }
 
         for _, prescription := range asset.Prescriptions {
             if prescription.CreatedBy == doctorId {
-                prescriptionData := map[string]interface{}{
-                    "PrescriptionId": prescription.PrescriptionId,
-                    "PatientId":     asset.PatientId,
-                    "PatientName":   asset.PatientName,
-                    "MedicationName": prescription.MedicationName,
-                    "Dosage":        prescription.Dosage,
-                    "Instructions":  prescription.Instructions,
-                    "Status":        prescription.Status,
-                    "Timestamp":     prescription.Timestamp,
-                    "ExpiryDate":    prescription.ExpiryDate,
-                    "TxID":          prescription.TxID,
+                // Validate required fields
+                if prescription.PrescriptionId == "" {
+                    continue // Skip prescriptions without IDs
                 }
-                
-                doctorPrescriptions = append(doctorPrescriptions, prescriptionData)
+
+                prescriptionData := map[string]interface{}{
+                    "Diagnosis":       firstNonEmpty(prescription.Diagnosis, "Not specified"),
+                    "Dosage":          firstNonEmpty(prescription.Dosage, "Not specified"),
+                    "ExpiryDate":      prescription.ExpiryDate,
+                    "Instructions":    firstNonEmpty(prescription.Instructions, "Not specified"),
+                    "MedicationName":  firstNonEmpty(prescription.MedicationName, "Not specified"),
+                    "PatientId":       asset.PatientId,
+                    "PatientName":     firstNonEmpty(asset.PatientName, "Unknown"),
+                    "PrescriptionId":  prescription.PrescriptionId,
+                    "Status":          firstNonEmpty(prescription.Status, "Unknown"),
+                    "Timestamp":       firstNonEmpty(prescription.Timestamp, time.Now().Format(time.RFC3339)),
+                    "TxID":            firstNonEmpty(prescription.TxID, "Not available"),
+                }
+                results = append(results, prescriptionData)
             }
         }
     }
 
-    return doctorPrescriptions, nil
+    if len(results) == 0 {
+        return nil, fmt.Errorf("no prescriptions found for doctor %s", doctorId)
+    }
+
+    return results, nil
+}
+
+// Helper function to return first non-empty string
+func firstNonEmpty(values ...string) string {
+    for _, v := range values {
+        if v != "" {
+            return v
+        }
+    }
+    return ""
+}
+
+// Helper function to generate random ID
+func generateId() string {
+    return fmt.Sprintf("%x", rand.Int63())
 }
 
 // GetDispenseHistory - get all prescriptions dispensed by a specific pharmacist
@@ -610,6 +685,7 @@ func (s *SmartContract) GetDispenseHistory(ctx contractapi.TransactionContextInt
                     "MedicationName":      prescription.MedicationName,
                     "Dosage":              prescription.Dosage,
                     "Instructions":        prescription.Instructions,
+                    "Diagnosis":           prescription.Diagnosis,
                     "Status":              prescription.Status,
                     "CreatedBy":           prescription.CreatedBy,
                     "DispensingTimestamp": prescription.DispensingTimestamp,
